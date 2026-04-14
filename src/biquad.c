@@ -17,7 +17,7 @@ static Biquad pk(f32 A, f32 cos_w, f32 alpha)
 
 		.b1 = -2.f*cos_w,
 		.db1_dA = 0.f,
-		.db1_dcos = -2.,
+		.db1_dcos = -2.f,
 
 		.b2 = -A*alpha + 1.f,
 		.db2_dA = -alpha,

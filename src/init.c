@@ -117,7 +117,7 @@ static Peak largest_peak(const f32 *restrict x, const f32 *restrict f, Lim lim)
 	return largest;
 }
 
-/* initializtation stategies adapted from jaakkopasanen/AutoEq */
+/* initialization strategies adapted from jaakkopasanen/AutoEq */
 
 static Filter init_pk(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f0, Lim lim_gain, Lim lim_q)
 {
@@ -145,24 +145,25 @@ static Filter init_pk(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f0
 	return (Filter){.f0 = f0, .gain = gain, .Q = Q};
 }
 
-static Filter init_lsc(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f0, Lim lim_gain, Lim lim_q)
+static Filter init_shelf(Type type, f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f0, Lim lim_gain, Lim lim_q, bool reverse)
 {
 	(void)lim_q;
 
-	lim_f0.lo = fmaxf(lim_f0.lo, 40.);
-	lim_f0.hi = fminf(lim_f0.hi, 10000.);
+	lim_f0.lo = fmaxf(lim_f0.lo, 40.f);
+	lim_f0.hi = fminf(lim_f0.hi, 10000.f);
 
 	f32 best = 0.f;
 	i32 best_idx = 0;
 
 	f32 a = 0.f;
 	FOR_K() {
-		a += y[k];
+		i32 idx = reverse ? K - 1 - k : k;
+		a += y[idx];
 
 		f32 avg = fabsf(a / (f32)(k + 1));
 		if (avg > best) {
 			best = avg;
-			best_idx = k;
+			best_idx = idx;
 		}
 	}
 
@@ -173,7 +174,7 @@ static Filter init_lsc(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f
 	limit(&Q, lim_q);
 
 	f32 w[K] = {0};
-	spectrum(LSC, f0, 1.f, Q, fs, f, w);
+	spectrum(type, f0, 1.f, Q, fs, f, w);
 
 	f32 p = 0.f, c = 0.f;
 	FOR_K() {
@@ -187,46 +188,14 @@ static Filter init_lsc(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f
 	return (Filter){.f0 = f0, .gain = gain, .Q = Q};
 }
 
+static Filter init_lsc(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f0, Lim lim_gain, Lim lim_q)
+{
+	return init_shelf(LSC, y, f, fs, lim_f0, lim_gain, lim_q, false);
+}
+
 static Filter init_hsc(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f0, Lim lim_gain, Lim lim_q)
 {
-	(void)lim_q;
-
-	lim_f0.lo = fmaxf(lim_f0.lo, 40.);
-	lim_f0.hi = fminf(lim_f0.hi, 10000.);
-
-	f32 best = 0.f;
-	i32 best_idx = 0;
-
-	f32 a = 0.f;
-	FOR_K() {
-		a += y[K - 1 - k];
-
-		f32 avg = fabsf(a / (f32)(k + 1));
-		if (avg > best) {
-			best = avg;
-			best_idx = K - 1 - k;
-		}
-	}
-
-	f32 f0 = f[best_idx],
-		Q = M_SQRT1_2;
-
-	limit(&f0, lim_f0);
-	limit(&Q, lim_q);
-
-	f32 w[K] = {0};
-	spectrum(HSC, f0, 1.f, Q, fs, f, w);
-
-	f32 p = 0.f, c = 0.f;
-	FOR_K() {
-		p += w[k]*y[k];
-		c += w[k];
-	}
-
-	f32 gain = p / c;
-	limit(&gain, lim_gain);
-
-	return (Filter){.f0 = f0, .gain = gain, .Q = Q};
+	return init_shelf(HSC, y, f, fs, lim_f0, lim_gain, lim_q, true);
 }
 
 const InitFn INIT_FNS[] = {

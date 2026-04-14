@@ -16,7 +16,7 @@
 #define INFO(...) fprintf(stderr, __VA_ARGS__)
 
 enum {
-    MAX_N = 32,
+	MAX_N = 32,
 	K     = 384,
 };
 
@@ -32,7 +32,7 @@ typedef enum {
 	PK,
 	LSC,
 	HSC,
-    _TYPE_N,
+	_TYPE_N,
 	_TYPE_INVALID = -1,
 } Type;
 

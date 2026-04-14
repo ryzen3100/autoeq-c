@@ -1,4 +1,7 @@
 /.vscode/
 /venv/
 /a.out
+/autoeq
+/autoeq-wasm.js
+/autoeq-wasm.wasm
 .DS_Store

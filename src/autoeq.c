@@ -355,7 +355,7 @@ static f32 fit(
 	}
 	INFO("\n");
 
-	return L;
+	return best_L;
 }
 
 static i32 search(const f32 *x, i32 n, f32 v)
@@ -538,6 +538,8 @@ f32 autoeq(
 	const f32 *restrict r,
 	f32 fs)
 {
+	if (steps <= 0) return 0.f;
+
 	f32 r_init[K];
 	memcpy(r_init, r, sizeof(*r) * K);
 
@@ -654,6 +656,20 @@ const Lim F0_LIM[]   = { FILTERS(X_F0) },
 
 _Static_assert(sizeof(TYPES)/sizeof(*TYPES) == MAX_N, "");
 
+static bool read_stdin(f32 *out, const char *name)
+{
+	u32 n_read = 0;
+	while (n_read != K) {
+		u32 got = fread(out, sizeof(*out), K - n_read, stdin);
+		if (!got) {
+			INFO("error reading %s from stdin\n", name);
+			return false;
+		}
+		n_read += got;
+	}
+	return true;
+}
+
 int main(int argc, char *argv[])
 {
 	f64 t0 = time_s();
@@ -677,7 +693,7 @@ int main(int argc, char *argv[])
 
 	char *end;
 	i32 N = (i32)strtol(argv[2], &end, 10);
-	if (N <= 0 || N > MAX_N) {
+	if (*end || N <= 0 || N > MAX_N) {
 		INFO("invalid count\n");
 		return -1;
 	}
@@ -685,7 +701,7 @@ int main(int argc, char *argv[])
 	i32 steps = 3000;
 	if (argc == 4) {
 		steps = (i32)strtol(argv[3], &end, 10);
-		if (steps <= 0) {
+		if (*end || steps <= 0) {
 			INFO("invalid steps\n");
 			return -1;
 		}
@@ -706,27 +722,10 @@ int main(int argc, char *argv[])
 
 	f32 dst[K], src[K];
 
-	u32 n_read = 0;
-	while (n_read != K) {
-		u32 got = fread(dst, sizeof(*dst), K - n_read, stdin);
-		if (!got) {
-			INFO("error reading dst from stdin\n");
-			return -1;
-		}
-		n_read += got;
-	}
+	if (!read_stdin(dst, "dst")) return -1;
+	if (!read_stdin(src, "src")) return -1;
 
-	n_read = 0;
-	while (n_read != K) {
-		u32 got = fread(src, sizeof(*src), K - n_read, stdin);
-		if (!got) {
-			INFO("error reading src from stdin\n");
-			return -1;
-		}
-		n_read += got;
-	}
-
-	f32 gain[MAX_N], f0[MAX_N], Q[MAX_N], amp = 0.;
+	f32 gain[MAX_N], f0[MAX_N], Q[MAX_N], amp = 0.f;
 
 	f32 r[K];
 	preprocess(f, dst, src, r, smooth, true);
@@ -748,7 +747,7 @@ int main(int argc, char *argv[])
 
 	f64 t1 = time_s();
 
-	INFO("\ntime: %.0f ms\n\n", 1000.*(t1 - t0));
+	INFO("\ntime: %.0f ms\n\n", 1000.f*(t1 - t0));
 }
 
 #undef X_Q
