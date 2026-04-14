@@ -156,3 +156,70 @@ pub fn spectrum(filter_type: Type, f0: f32, gain: f32, Q: f32, fs: f32, f: [*]co
         y[k_] += (10.0 / std.math.ln10) * (@log(b_poly) - @log(a_poly));
     }
 }
+
+test "pk returns valid biquad for positive gain" {
+    const A: f32 = 2.0;
+    const cos_w: f32 = 0.5;
+    const alpha: f32 = 0.1;
+    const b = pk(A, cos_w, alpha);
+    try std.testing.expect(!std.math.isNan(b.b0));
+    try std.testing.expect(!std.math.isNan(b.b1));
+    try std.testing.expect(!std.math.isNan(b.b2));
+    try std.testing.expect(!std.math.isNan(b.a1));
+    try std.testing.expect(!std.math.isNan(b.a2));
+    try std.testing.expect(!std.math.isInf(b.b0));
+    // Positive gain peaking filter: b0 should be positive
+    try std.testing.expect(b.b0 > 0);
+}
+
+test "lsc returns valid biquad" {
+    const A: f32 = 1.5;
+    const cos_w: f32 = 0.707;
+    const alpha: f32 = 0.05;
+    const b = lsc(A, cos_w, alpha);
+    try std.testing.expect(!std.math.isNan(b.b0));
+    try std.testing.expect(!std.math.isNan(b.a1));
+    try std.testing.expect(!std.math.isInf(b.b0));
+}
+
+test "hsc returns valid biquad" {
+    const A: f32 = 0.8;
+    const cos_w: f32 = 0.707;
+    const alpha: f32 = 0.05;
+    const b = hsc(A, cos_w, alpha);
+    try std.testing.expect(!std.math.isNan(b.b0));
+    try std.testing.expect(!std.math.isNan(b.a1));
+    try std.testing.expect(!std.math.isInf(b.b0));
+}
+
+test "spectrum pk at center frequency matches gain" {
+    const fs: f32 = 48000.0;
+    const f0: f32 = 1000.0;
+    const gain: f32 = 6.0;
+    const Q: f32 = 1.0;
+
+    var freqs: [K]f32 = undefined;
+    for (0..K) |i| {
+        freqs[i] = 20.0 * @exp(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(K - 1)) * @log(1000.0));
+    }
+    var y: [K]f32 = @splat(0.0);
+
+    spectrum(.pk, f0, gain, Q, fs, &freqs, &y);
+
+    // Response at center frequency should be close to the gain (in dB)
+    // Find the closest grid point to f0
+    var best_i: usize = 0;
+    var best_diff: f32 = 1e10;
+    for (0..K) |i| {
+        const diff = @abs(freqs[i] - f0);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best_i = i;
+        }
+    }
+    // At center frequency, response should be approximately gain dB
+    try std.testing.expectApproxEqAbs(@as(f32, gain), y[best_i], 0.5);
+
+    // Response far from center should be close to 0 dB
+    try std.testing.expect(@abs(y[0]) < 2.0);
+}

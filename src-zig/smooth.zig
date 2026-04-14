@@ -179,3 +179,40 @@ pub fn preprocess(
 
     return mean;
 }
+
+test "search finds exact match" {
+    var arr: [5]f32 = .{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const idx = search(&arr, 5, 3.0);
+    try std.testing.expect(idx == 2);
+}
+
+test "search finds closest value" {
+    var arr: [5]f32 = .{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const idx = search(&arr, 5, 2.7);
+    try std.testing.expect(idx == 2);
+}
+
+test "search at boundaries" {
+    var arr: [5]f32 = .{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const idx_lo = search(&arr, 5, 0.0);
+    try std.testing.expect(idx_lo == 0);
+    const idx_hi = search(&arr, 5, 6.0);
+    try std.testing.expect(idx_hi == 4);
+}
+
+test "preprocess produces finite output" {
+    var freqs: [K]f32 = undefined;
+    for (0..K) |i| {
+        freqs[i] = 20.0 * @exp(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(K - 1)) * @log(1000.0));
+    }
+    var dst: [K]f32 = @splat(2.0);
+    var src: [K]f32 = @splat(2.0);
+    var r: [K]f32 = @splat(0.0);
+
+    const mean = preprocess(&freqs, &dst, &src, &r, null, false);
+    try std.testing.expect(std.math.isFinite(mean));
+
+    for (0..K) |i| {
+        try std.testing.expect(std.math.isFinite(r[i]));
+    }
+}

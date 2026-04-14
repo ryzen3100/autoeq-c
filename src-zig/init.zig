@@ -204,3 +204,19 @@ pub fn init_fn(filter_type: Type) *const fn ([*]f32, [*]const f32, f32, Lim, Lim
         else => &init_pk,
     };
 }
+
+test "largest_peak finds obvious peak" {
+    // Create K-sized arrays with an obvious peak at index 50
+    var data: [K]f32 = @splat(-1.0);
+    var freqs: [K]f32 = undefined;
+    for (0..K) |i| {
+        freqs[i] = 20.0 * @exp(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(K - 1)) * @log(1000.0));
+        data[i] = -@abs(@as(f32, @floatFromInt(i)) - 50.0);
+    }
+    data[50] = 10.0;
+
+    const result = largest_peak(&data, &freqs, .{ .lo = freqs[0], .hi = freqs[K - 1] });
+    try std.testing.expect(result.idx == 50);
+    try std.testing.expect(result.height > 5.0);
+    try std.testing.expect(result.width > 0);
+}

@@ -440,3 +440,89 @@ pub fn autoeq(
 
     return fit(steps, filter_types, f0, gain, Q, amp, f0_lim, gain_lim, Q_lim, N, f, r, fs);
 }
+
+test "grad returns positive loss and finite gradients" {
+    const N: usize = 2;
+    var freqs: [K]f32 = undefined;
+    for (0..K) |i| {
+        freqs[i] = 20.0 * @exp(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(K - 1)) * @log(1000.0));
+    }
+    var r: [K]f32 = @splat(1.0);
+
+    var types: [max_n]Type = @splat(.pk);
+    types[0] = .lsc;
+    types[1] = .hsc;
+
+    // phi must be sin²(π f / fs) — same as computed in fit()
+    var phi: [K]f32 = undefined;
+    for (0..K) |i| {
+        phi[i] = sq(@sin(std.math.pi / 48000.0 * freqs[i]));
+    }
+
+    const consts = Consts{
+        .filter_types = &types,
+        .phi = &phi,
+        .r = &r,
+        .fs = 48000.0,
+        .N = @intCast(N),
+        .opt_amp = true,
+    };
+
+    var x = Wrt{};
+    // Set some initial values
+    x.v[0] = 7.0; // lf0 for filter 0
+    x.v[1] = 6.0; // lf0 for filter 1
+    x.v[2] = 0.0; // gain for filter 0
+    x.v[3] = 0.0; // gain for filter 1
+    x.v[4] = 0.5; // bw for filter 0
+    x.v[5] = 0.5; // bw for filter 1
+    x.v[6] = 0.0; // amp
+
+    var g = Wrt{};
+    const loss = grad(&consts, &x, &g);
+    try std.testing.expect(loss > 0);
+    try std.testing.expect(std.math.isFinite(loss));
+
+    const w = 3 * N + 1;
+    for (0..w) |i| {
+        try std.testing.expect(std.math.isFinite(g.v[i]));
+    }
+}
+
+test "autoeq end-to-end with minimal config" {
+    var freqs: [K]f32 = undefined;
+    for (0..K) |i| {
+        freqs[i] = 20.0 * @exp(@as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(K - 1)) * @log(1000.0));
+    }
+    var r: [K]f32 = @splat(1.0);
+    var f0: [max_n]f32 = @splat(1000.0);
+    var gain: [max_n]f32 = @splat(0.0);
+    var Q: [max_n]f32 = @splat(1.0);
+    var amp: f32 = 0.0;
+
+    var types: [max_n]Type = @splat(.pk);
+    types[0] = .lsc;
+    types[1] = .hsc;
+
+    var f0_lim: [max_n]Lim = @splat(.{ .lo = 20.0, .hi = 16000.0 });
+    var gain_lim: [max_n]Lim = @splat(.{ .lo = -16.0, .hi = 16.0 });
+    var q_lim: [max_n]Lim = @splat(.{ .lo = 0.4, .hi = 4.0 });
+
+    const loss = autoeq(
+        50, &types, &f0, &gain, &Q, &amp,
+        &f0_lim, &gain_lim, &q_lim,
+        2, &freqs, &r, 48000.0,
+    );
+
+    try std.testing.expect(std.math.isFinite(loss));
+    try std.testing.expect(loss >= 0);
+    // Filter parameters should be within bounds
+    for (0..2) |i| {
+        try std.testing.expect(f0[i] >= 20.0);
+        try std.testing.expect(f0[i] <= 16000.0);
+        try std.testing.expect(gain[i] >= -16.0);
+        try std.testing.expect(gain[i] <= 16.0);
+        try std.testing.expect(Q[i] >= 0.4);
+        try std.testing.expect(Q[i] <= 4.0);
+    }
+}
