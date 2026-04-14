@@ -1,4 +1,4 @@
-import * as autoeq from './autoeq';
+import * as autoeq from './autoeq.js';
 
 const inst = await autoeq.make();
 

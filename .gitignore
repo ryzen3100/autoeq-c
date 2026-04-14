@@ -3,5 +3,8 @@
 /a.out
 /autoeq
 /autoeq-wasm.js
-/autoeq-wasm.wasm
 .DS_Store
+.zig-cache/
+zig-out/
+example/autoeq-wasm.wasm
+example/autoeq

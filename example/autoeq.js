@@ -3,9 +3,7 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later
  */
 
-/* run ./build and move autoeq-wasm.js to this folder */
-
-import Module from './autoeq-wasm';
+/* Build with: zig build (produces zig-out/bin/autoeq-wasm.wasm) */
 
 const N = 384,
       X0 = 20,
@@ -66,16 +64,34 @@ export const Smooth = Object.freeze({
  * }} Spec
  */
 
-/**
- * @typedef {{
- *   m: any,
- * }} Inst
- */
+/** @typedef {{ m: WebAssembly.Instance }} Inst */
 
-/** @returns {Promise<Inst>} */
-export async function make() {
-  const m = await Module();
-  return { m };
+/** @param {string|URL|ArrayBuffer} [wasmSource] @returns {Promise<Inst>} */
+export async function make(wasmSource) {
+  let bytes;
+  if (wasmSource instanceof ArrayBuffer) {
+    bytes = wasmSource;
+  } else if (typeof wasmSource === 'string' || wasmSource instanceof URL) {
+    const url = typeof wasmSource === 'string' ? new URL(wasmSource, import.meta.url) : wasmSource;
+    if (url.protocol === 'file:') {
+      const fs = await import('node:fs/promises');
+      bytes = await fs.readFile(url);
+    } else {
+      const resp = await fetch(url);
+      bytes = await resp.arrayBuffer();
+    }
+  } else {
+    const url = new URL('./autoeq-wasm.wasm', import.meta.url);
+    if (url.protocol === 'file:') {
+      const fs = await import('node:fs/promises');
+      bytes = await fs.readFile(url);
+    } else {
+      const resp = await fetch(url);
+      bytes = await resp.arrayBuffer();
+    }
+  }
+  const { instance } = await WebAssembly.instantiate(bytes);
+  return { m: instance };
 }
 
 /**
@@ -133,10 +149,13 @@ export function run(s, dst, src, config, smooth = Smooth.NONE, steps = 3000, fs 
 
   const types = Int32Array.from(config.specs.map(s => s.type));
 
+  const exp = s.m.exports;
+  const mem = exp.memory.buffer;
+
   let allocs = [];
 
   function alloc(sz) {
-    const p = s.m._malloc(sz);
+    const p = exp.malloc(sz);
     allocs.push(p);
     return p;
   }
@@ -149,9 +168,9 @@ export function run(s, dst, src, config, smooth = Smooth.NONE, steps = 3000, fs 
         pSrc = alloc(k * 4),
         pR   = alloc(k * 4);
 
-  s.m.HEAPF32.set(X, pF >> 2);
-  s.m.HEAPF32.set(dst, pDst >> 2);
-  s.m.HEAPF32.set(src, pSrc >> 2);
+  new Float32Array(mem).set(X, pF >> 2);
+  new Float32Array(mem).set(dst, pDst >> 2);
+  new Float32Array(mem).set(src, pSrc >> 2);
 
   const pTypes = alloc(n * 4),
         pF0    = alloc(n * 4),
@@ -159,46 +178,47 @@ export function run(s, dst, src, config, smooth = Smooth.NONE, steps = 3000, fs 
         pQ     = alloc(n * 4),
         pAmp   = alloc(4);
 
-  s.m.HEAP32.set(types, pTypes >> 2);
+  new Int32Array(mem).set(types, pTypes >> 2);
 
   const pF0Lim   = alloc(n * 8),
         pGainLim = alloc(n * 8),
         pQLim    = alloc(n * 8);
 
+  const heap = new Float32Array(mem);
   config.specs.forEach((spec, i) => {
     let p = (pF0Lim >> 2) + 2*i;
-    s.m.HEAPF32[p + 0] = spec.f0[0];
-    s.m.HEAPF32[p + 1] = spec.f0[1];
+    heap[p + 0] = spec.f0[0];
+    heap[p + 1] = spec.f0[1];
 
     p = (pGainLim >> 2) + 2*i;
-    s.m.HEAPF32[p + 0] = spec.gain[0];
-    s.m.HEAPF32[p + 1] = spec.gain[1];
+    heap[p + 0] = spec.gain[0];
+    heap[p + 1] = spec.gain[1];
 
     p = (pQLim >> 2) + 2*i;
-    s.m.HEAPF32[p + 0] = spec.q[0];
-    s.m.HEAPF32[p + 1] = spec.q[1];
+    heap[p + 0] = spec.q[0];
+    heap[p + 1] = spec.q[1];
   });
 
-  let pSmooth = !config.smooth ? null
-    : smooth == Smooth.IE ? s.m._get_ie_smooth()
-    : smooth == Smooth.OE ? s.m._get_oe_smooth()
-    : null;
+  let pSmooth = !config.smooth ? 0
+    : smooth == Smooth.IE ? exp.get_ie_smooth()
+    : smooth == Smooth.OE ? exp.get_oe_smooth()
+    : 0;
 
   const t0 = performance.now();
 
-  const mean = s.m._preprocess(pF, pDst, pSrc, pR, pSmooth, config.demean);
-  const loss = s.m._autoeq(
+  const mean = exp.preprocess_export(pF, pDst, pSrc, pR, pSmooth, config.demean);
+  const loss = exp.autoeq_export(
     steps, pTypes, pF0, pGain, pQ, config.demean ? pAmp : 0,
     pF0Lim, pGainLim, pQLim,
     n, pF, pR, fs);
 
   const t1 = performance.now();
 
-  const f0   = new Float32Array(s.m.HEAPF32.buffer, pF0, n),
-        gain = new Float32Array(s.m.HEAPF32.buffer, pGain, n),
-        q    = new Float32Array(s.m.HEAPF32.buffer, pQ, n);
+  const f0   = new Float32Array(mem, pF0, n),
+        gain = new Float32Array(mem, pGain, n),
+        q    = new Float32Array(mem, pQ, n);
 
-  const amp = config.demean ? s.m.HEAPF32[pAmp >> 2] : 0;
+  const amp = config.demean ? new Float32Array(mem)[pAmp >> 2] : 0;
 
   /** @type {Filter[]} */
   const filters = [];
@@ -212,7 +232,7 @@ export function run(s, dst, src, config, smooth = Smooth.NONE, steps = 3000, fs 
     });
   }
 
-  allocs.forEach(s.m._free);
+  allocs.forEach(p => exp.free(p));
 
   return {
     filters,
