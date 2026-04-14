@@ -72,7 +72,7 @@ inline static f32 sq(f32 x)
 	return x * x;
 }
 
-inline static f32 exp10(f32 x)
+inline static f32 exp10f_inline(f32 x)
 {
 	return expf((f32)M_LN10 * x);
 }

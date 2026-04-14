@@ -134,7 +134,7 @@ const BiquadFn BIQUAD_FNS[] = {
 
 void spectrum(Type type, f32 f0, f32 gain, f32 Q, f32 fs, const f32 *restrict f, f32 *restrict y)
 {
-	f32 A = exp10(gain / 40.f),
+	f32 A = exp10f_inline(gain / 40.f),
 		w0 = 2.f*(f32)M_PI/fs * f0,
 		cos_w = cosf(w0),
 		sin_w = sinf(w0),
@@ -155,7 +155,7 @@ void spectrum(Type type, f32 f0, f32 gain, f32 Q, f32 fs, const f32 *restrict f,
 		f32 b_poly = b_x0 + phi*(b_x1 + phi*b_x2),
 			a_poly = a_x0 + phi*(a_x1 + phi*a_x2);
 
-		y[k] += 10.f*log10f(b_poly / a_poly);
+		y[k] += (10.f/(f32)M_LN10) * (logf(b_poly) - logf(a_poly));
 	}
 }
 

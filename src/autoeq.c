@@ -58,7 +58,7 @@ static f32 grad(const Consts *restrict c, Wrt *restrict x, Wrt *restrict g)
 	f32 w0_v[MAX_N];
 
 	f32 pred[K],
-		pred_init = opt_amp ? exp10(AMP_AT(x) / 10.f) : 1.f;
+		pred_init = opt_amp ? exp10f_inline(AMP_AT(x) / 10.f) : 1.f;
 
 	FOR_K() pred[k] = pred_init;
 
@@ -69,7 +69,7 @@ static f32 grad(const Consts *restrict c, Wrt *restrict x, Wrt *restrict g)
 			gain = GAIN_AT(x, n),
 			bw   = BW_AT(x, n);
 
-		f32 A     = exp10(gain / 40.f),
+		f32 A     = exp10f_inline(gain / 40.f),
 			w0    = 2.f*(f32)M_PI/c->fs * f0,
 			cos_w = cosf(w0),
 			sin_w = sinf(w0),
@@ -149,7 +149,7 @@ static f32 grad(const Consts *restrict c, Wrt *restrict x, Wrt *restrict g)
 		dL_dy_sum = 0.f;
 
 	FOR_K() {
-		f32 d = 10.f*log10f(pred[k]) - c->r[k];
+		f32 d = (10.f/(f32)M_LN10)*logf(pred[k]) - c->r[k];
 		L += sq(d);
 		dL_dy_sum += dL_dy[k] = 2.f*d;
 	}
@@ -291,7 +291,7 @@ static f32 fit(
 	INFO("\n");
 
 	Wrt g, best;
-	f32 L, best_L = 1e9f;
+	f32 L = 0.f, best_L = 1e9f;
 
 	f64 t0 = time_s();
 
@@ -360,16 +360,21 @@ static f32 fit(
 
 static i32 search(const f32 *x, i32 n, f32 v)
 {
-	i32 idx = -1;
-	f32 best = 1e9f;
-	for (i32 i = 0; i < n; ++i) {
-		f32 d = fabsf(x[i] - v);
-		if (d < best) {
-			best = d;
-			idx = i;
-		}
+	/* binary search — x[] is monotonic */
+	i32 lo = 0, hi = n - 1;
+	while (lo < hi) {
+		i32 mid = lo + (hi - lo) / 2;
+		if (x[mid] < v)
+			lo = mid + 1;
+		else
+			hi = mid;
 	}
-	return idx;
+
+	/* check neighbor */
+	if (lo > 0 && fabsf(x[lo - 1] - v) < fabsf(x[lo] - v))
+		--lo;
+
+	return lo;
 }
 
 /* sigmoid-based step function */
@@ -445,18 +450,18 @@ static void adaptive_smooth(const Smooth *s, const f32 *restrict f, f32 *restric
 			c = 0.f;
 
 		for (i32 j = -H; j <= H; ++j) {
-			i32 s = k + j;
-			s = s < 0 ? 0
-			  : s > clip_idx ? clip_idx
-			  : s;
+			i32 jj = k + j;
+			jj = jj < 0 ? 0
+			  : jj > clip_idx ? clip_idx
+			  : jj;
 
-			f32 x_s = x[s],
+			f32 x_jj = x[jj],
 				d_spatial = sq((f32)j * sigma),
-				d_range   = bias * (x_s - x_k);
+				d_range   = bias * (x_jj - x_k);
 
 			f32 w = expf(-.5f*d_spatial + d_range);
 
-			a += w * x[s];
+			a += w * x[jj];
 			c += w;
 		}
 
@@ -702,12 +707,24 @@ int main(int argc, char *argv[])
 	f32 dst[K], src[K];
 
 	u32 n_read = 0;
-	while (n_read != K)
-		n_read += fread(dst, sizeof(*dst), K - n_read, stdin);
+	while (n_read != K) {
+		u32 got = fread(dst, sizeof(*dst), K - n_read, stdin);
+		if (!got) {
+			INFO("error reading dst from stdin\n");
+			return -1;
+		}
+		n_read += got;
+	}
 
 	n_read = 0;
-	while (n_read != K)
-		n_read += fread(src, sizeof(*src), K - n_read, stdin);
+	while (n_read != K) {
+		u32 got = fread(src, sizeof(*src), K - n_read, stdin);
+		if (!got) {
+			INFO("error reading src from stdin\n");
+			return -1;
+		}
+		n_read += got;
+	}
 
 	f32 gain[MAX_N], f0[MAX_N], Q[MAX_N], amp = 0.;
 
@@ -739,7 +756,7 @@ int main(int argc, char *argv[])
 #undef X_F0
 #undef X_TYPE
 
-#undef X_LIST
+#undef FILTERS
 #undef A
 
 #endif

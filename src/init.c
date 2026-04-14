@@ -50,14 +50,14 @@ static Peak largest_peak(const f32 *restrict x, const f32 *restrict f, Lim lim)
 
 	for (i32 p = 0; p < n; ++p) {
 		i32 peak = peaks[p],
-			i_min = 0,
-			i_max = K - 1;
+			lo = 0,
+			hi = K - 1;
 
 		f32 x_peak = x[peak];
 
 		left_bases[p] = peak;
 		f32 left_min = x_peak;
-		for (i32 i = peak; i_min <= i && x[i] <= x_peak; --i) {
+		for (i32 i = peak; lo <= i && x[i] <= x_peak; --i) {
 			if (x[i] < left_min) {
 				left_min = x[i];
 				left_bases[p] = i;
@@ -66,7 +66,7 @@ static Peak largest_peak(const f32 *restrict x, const f32 *restrict f, Lim lim)
 
 		right_bases[p] = peak;
 		f32 right_min = x_peak;
-		for (i32 i = peak; i <= i_max && x[i] <= x_peak; ++i) {
+		for (i32 i = peak; i <= hi && x[i] <= x_peak; ++i) {
 			if (x[i] < right_min) {
 				right_min = x[i];
 				right_bases[p] = i;
@@ -82,15 +82,15 @@ static Peak largest_peak(const f32 *restrict x, const f32 *restrict f, Lim lim)
 	f32 largest_size = 0.f;
 
 	for (i32 p = 0; p < n; ++p) {
-		i32 i_min = left_bases[p],
-			i_max = right_bases[p],
+		i32 lo = left_bases[p],
+			hi = right_bases[p],
 			peak = peaks[p];
 
 		f32 x_peak = x[peak],
 			height = x_peak - .5f*prominences[p];
 
 		i32 i = peak;
-		while (i_min < i && height < x[i])
+		while (lo < i && height < x[i])
 			--i;
 
 		f32 left_ip = (f32)i;
@@ -98,7 +98,7 @@ static Peak largest_peak(const f32 *restrict x, const f32 *restrict f, Lim lim)
 			left_ip += (height - x[i]) / (x[i + 1] - x[i]);
 
 		i = peak;
-		while (i < i_max && height < x[i])
+		while (i < hi && height < x[i])
 			++i;
 
 		f32 right_ip = (f32)i;
@@ -153,7 +153,7 @@ static Filter init_lsc(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f
 	lim_f0.hi = fminf(lim_f0.hi, 10000.);
 
 	f32 best = 0.f;
-	i32 best_idx = -1;
+	i32 best_idx = 0;
 
 	f32 a = 0.f;
 	FOR_K() {
@@ -195,7 +195,7 @@ static Filter init_hsc(f32 *restrict y, const f32 *restrict f, f32 fs, Lim lim_f
 	lim_f0.hi = fminf(lim_f0.hi, 10000.);
 
 	f32 best = 0.f;
-	i32 best_idx = -1;
+	i32 best_idx = 0;
 
 	f32 a = 0.f;
 	FOR_K() {
