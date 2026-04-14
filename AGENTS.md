@@ -2,10 +2,10 @@ You are an experienced, pragmatic software engineering AI agent. Do not over-eng
 
 # Project Overview
 
-**autoeq-c** is a fast AutoEQ (automatic equalization) engine written in C by PEQdB Inc. It fits parametric EQ filters (Peaking, Low Shelf, High Shelf) to match a target frequency response given a source measurement. The core algorithm uses gradient-based optimization (AdaBelief) with analytical derivatives to minimize MSE between the residual and zero across a fixed 384-point log-spaced frequency grid (20 Hz–20 kHz).
+**autoeq-c** is a fast AutoEQ (automatic equalization) engine by PEQdB Inc. It fits parametric EQ filters (Peaking, Low Shelf, High Shelf) to match a target frequency response given a source measurement. The core algorithm uses gradient-based optimization (AdaBelief) with analytical derivatives to minimize MSE between the residual and zero across a fixed 384-point log-spaced frequency grid (20 Hz–20 kHz).
 
-The project produces two build targets:
-1. **WebAssembly module** (via Emscripten) — consumed from JS/TS
+The project produces two build targets via a single `build.zig`:
+1. **WebAssembly module** (native Zig cross-compilation, no Emscripten) — consumed from JS/TS
 2. **Native CLI binary** — consumed via stdin/stdout (float32 binary input, text output)
 
 Licensed under LGPL-3.0-or-later.
@@ -14,30 +14,37 @@ Licensed under LGPL-3.0-or-later.
 
 | Layer | Technology |
 |-------|-----------|
-| Core language | C (C11: `_Static_assert`, `bool`, compound literals, `restrict`) |
-| WASM build | Emscripten (`emcc`) with `-O3 -ffast-math -msimd128` |
-| JS wrapper | Vanilla JavaScript (ES modules, JSDoc types) |
-| Build tooling | Single `./build` shell script; `cc` for native |
-| No package manager, no npm/pip, no Makefile, no CI |
+| Core language | Zig 0.15.2 |
+| Build system | `build.zig` (Zig's built-in build system) |
+| WASM build | `zig build` cross-compilation to `wasm32-freestanding` |
+| JS wrapper | Vanilla JavaScript (ES modules, JSDoc types, raw WebAssembly API) |
+| Tests | `zig build test` (Zig's built-in test runner) |
+| No package manager, no npm/pip, no CI |
 
 # Reference
 
 ## Directory Structure
 
 ```
-src/
-  lib.h        — Types (Biquad, Filter, Lim, Type enum), constants (MAX_N=32, K=384), inline helpers
-  biquad.c     — Biquad coefficient computation with analytical derivatives, spectrum()
-  init.c       — Filter initialization via peak-finding (adapted from scipy/jaakkopasanen/AutoEq)
-  autoeq.c     — Core: gradient, AdaBelief optimizer, preprocessing, CLI main()
+src-zig/
+  types.zig    — Types (Biquad, Filter, Lim, Type enum), constants (MAX_N=32, K=384)
+  biquad.zig   — Biquad coefficient computation with analytical derivatives, spectrum()
+  init.zig     — Filter initialization via peak-finding (adapted from scipy/jaakkopasanen/AutoEq)
+  smooth.zig   — Smoothing presets (in-ear, over-ear)
+  optimize.zig — AdaBelief optimizer, gradient computation, fitting
+  root.zig     — Preprocessing, top-level autoeq orchestration
+  cli.zig      — Native CLI main (stdin/stdout)
+  wasm.zig     — WebAssembly exports
+src/            — Original C source (kept for reference, not built)
 example/
-  autoeq.js    — JS/TS wrapper for WASM module (memory management, configs, Smooth enum)
+  autoeq.js       — JS/TS wrapper for WASM module (raw WebAssembly API, memory management, configs, Smooth enum)
   autoeq-wasm.d.ts — Minimal TS declaration for WASM module
-  test.ts      — TypeScript usage example
-  test.py      — Python wrapper for native binary (subprocess + float32 stdin)
+  test.ts         — TypeScript usage example
+  test.py         — Python wrapper for native binary (subprocess + float32 stdin)
 web/
-  pre.js       — Emscripten --pre-js: routes stderr to console.debug
-build          — Shell script: emcc build for WASM
+  pre.js          — Legacy Emscripten --pre-js (no longer used)
+build             — Legacy shell script for Emscripten build (no longer used)
+build.zig         — Zig build file (native + WASM targets, test step)
 ```
 
 ## Architecture
@@ -57,39 +64,47 @@ Key design decisions:
 - **Fixed frequency grid**: 384 log-spaced points, all computation on this grid
 - **Greedy sequential initialization**: Find largest peak → fit filter → subtract → repeat
 
-## C Conventions
+## Zig Conventions
 
-- Custom typedefs: `i32`, `u32`, `f32`, `f64`
-- Macros: `FOR_K()`, `FOR_N()`, `FOR_W()` for grid/filter iteration
-- `restrict` qualifiers throughout for aliasing optimization
-- `__builtin_expect` for branch hints
-- Designated initializers for arrays/structs
-- `#ifdef WASM` for conditional compilation (WASM vs native)
-- `INFO()` macro → `fprintf(stderr, ...)` for logging
+- `@setFloatMode(.optimized)` on hot paths for fast-math semantics (equivalent to C's `-ffast-math`)
+- `@import` for module dependencies; `pub` for exported symbols
+- Slices and arrays indexed with `[n]` syntax; `for` loops over slices
+- `comptime` where possible for compile-time evaluation
+- `std.mem.copy` / `std.mem.set` instead of `memcpy`/`memset`
+- Exported WASM functions use `export fn` with ABI-compatible types
+- Native CLI uses Zig's `std.process` for argument parsing and I/O
 - Tabs for indentation (per `.editorconfig`)
+
+## Lessons Learned
+
+- **WASM build**: Zig cross-compiles to `wasm32-freestanding` natively — no Emscripten needed. The WASM module exports flat C-ABI functions.
+- **Float mode**: `@setFloatMode(.optimized)` must be set on hot-path functions (biquad, optimizer) to get performance comparable to C's `-ffast-math`.
+- **Performance**: Zig is ~4-18% slower than C (`-O3 -ffast-math`) on this workload. Native binary is ~1.1MB (includes Zig std lib) vs C's ~39KB.
+- **JS wrapper**: Updated from Emscripten module to raw WebAssembly API (`WebAssembly.instantiateStreaming`). Same public interface preserved.
+- **Binary sizes**: Native ~1.1MB, WASM ~641KB.
 
 # Essential Commands
 
 ```sh
-# WASM build (requires emcc in PATH)
-./build
+# Build everything (native + WASM)
+zig build -Doptimize=ReleaseFast
 
-# Native build
-cc src/*.c -lm -o autoeq
+# Run tests
+zig build test
 
-# Native CLI usage
+# Native CLI usage (binary is at zig-out/bin/autoeq)
 # i=in-ear smooth, o=over-ear smooth, x=no smooth
 # N=number of filters (1-32), steps=optimizer iterations (default 3000)
-./autoeq [iox] <N> <?steps>
+./zig-out/bin/autoeq [iox] <N> <?steps>
 # Input: 768 float32 values via stdin (384 dst + 384 src)
 ```
 
-No test framework, linter, or formatter is configured.
+No linter or formatter is configured beyond `.editorconfig`.
 
 # Commit and Pull Request Guidelines
 
 - Commit messages: lowercase, brief imperative (e.g., `add python example`, `readme changes`, `ts -> js`).
-- Validate with `./build` (WASM) and/or `cc src/*.c -lm -o autoeq` (native) before committing.
+- Validate with `zig build` and `zig build test` before committing.
 - No PR template or issue templates exist.
 # Notes
 

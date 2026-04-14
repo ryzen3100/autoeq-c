@@ -1,25 +1,35 @@
 # autoeq-c
 
-Blazing fast and accurate AutoEQ in C that produces high-quality, rig-aware results.
+Blazing fast and accurate AutoEQ engine that produces high-quality, rig-aware results.
 
-This repo contains:
+Originally written in C, now implemented in Zig (0.15.2). The original C source in `src/` is kept for reference.
 
-- A WebAssembly build (Emscripten) intended to be called from TypeScript/JavaScript
-- A native C implementation (for CLI / embedding)
+This repo produces two build targets via a single `build.zig`:
 
-## WASM build/usage
+- **WebAssembly module** — consumed from JS/TS (raw WebAssembly API, no Emscripten)
+- **Native CLI binary** — consumed via stdin/stdout (float32 binary input, text output)
+
+## Build
 
 Requirements:
 
-- Emscripten (`emcc`) available in `PATH` (via `emsdk`)
+- [Zig](https://ziglang.org/) 0.15.2
 
-Build:
+```sh
+zig build -Doptimize=ReleaseFast
+```
 
-- `./build`
+This produces:
+- `zig-out/bin/autoeq` — native CLI binary
+- `zig-out/bin/autoeq.wasm` — WebAssembly module
 
-This produces a single-file Emscripten module `autoeq-wasm.js` in the current folder.
+Run tests:
 
-The intended consumer is the JavaScript wrapper in [example/autoeq.js](example/autoeq.js).
+```sh
+zig build test
+```
+
+The WASM module is consumed by the JavaScript wrapper in [example/autoeq.js](example/autoeq.js).
 
 Three functions are provided:
 
@@ -29,7 +39,7 @@ Three functions are provided:
 
 Notes:
 
-- The frequency axis is fixed to 384 log-spaced points `X` from 20 Hz → 20 kHz. If your data isn’t already on the internal `X` grid, use the provide linear interpolation function `interp(x, y)` from `example/autoeq.js`.
+- The frequency axis is fixed to 384 log-spaced points `X` from 20 Hz → 20 kHz. If your data isn’t already on the internal `X` grid, use the provided linear interpolation function `interp(x, y)` from `example/autoeq.js`.
 - `interp()` is linear interpolation. If you resample very dense data (e.g. raw FFT / measurement output) directly down to 384 points you will introduce aliasing artifacts. Prefer to bin/average onto a log-spaced grid and/or apply some smoothing before interpolating.
 - The number of filters must be <= 32. Default configs are provided as `autoeq.CONFIGS.STANDARD(N)` and `autoeq.CONFIGS.PRECISE(N)`.
 
@@ -88,13 +98,11 @@ Example output:
 }
 ```
 
-## Native build/usage
+## Native CLI usage
 
-Build:
+The native binary is built by the same `zig build -Doptimize=ReleaseFast` command above (outputs to `zig-out/bin/autoeq`).
 
-- `cc src/*.c -lm -o autoeq`
-
-The native binary is a low-level tool meant to be called from a script or part of a larger program.
+It is a low-level tool meant to be called from a script or part of a larger program.
 
 - `./autoeq [iox] <N> <?steps>`
 
