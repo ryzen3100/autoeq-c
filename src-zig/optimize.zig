@@ -25,6 +25,10 @@ const preprocess = smooth_mod.preprocess;
 
 pub const max_w = 3 * max_n + 1;
 
+/// 4-wide SIMD vector type for K=384 vectorized reductions (384/4=96 iterations).
+const Vec4 = @Vector(4, f32);
+const v4s: Vec4 = @splat(0.0);
+
 pub const Wrt = struct {
     v: [max_w]f32 = @splat(0.0),
 };
@@ -126,51 +130,93 @@ fn grad(c: *const Consts, x: *Wrt, g: *Wrt) f32 {
         const ba = s.b0 + s.b1 + s.b2;
         const aa = s.a0 + s.a1 + s.a2;
 
-        for (0..K) |k_| {
-            const phi_k = c.phi[k_];
+        // Precompute scalar constants used inside the k-loop to avoid
+        // redundant work when we vectorise 4 elements at a time.
+        const bm_c: f32 = 20.0 / std.math.ln10;
+        const am_c: f32 = -20.0 / std.math.ln10;
+        const b1_4b2: f32 = s.b1 + 4.0 * s.b2;
+        const b0_b2: f32 = s.b0 + s.b2;
+        const _4b0_b1: f32 = 4.0 * s.b0 + s.b1;
+        const a1_4a2: f32 = s.a1 + 4.0 * s.a2;
+        const a0_a2: f32 = s.a0 + s.a2;
+        const _4a0_a1: f32 = 4.0 * s.a0 + s.a1;
 
-            const b_poly = b_x0 + phi_k * (b_x1 + phi_k * b_x2);
-            const a_poly = a_x0 + phi_k * (a_x1 + phi_k * a_x2);
+        // --- Vectorised inner loop: 4 elements at a time ---
+        const K4 = K / 4;
+        var ki: usize = 0;
+        while (ki < K4) : (ki += 1) {
+            const base = ki * 4;
 
-            pred[k_] *= b_poly / a_poly;
+            // Load 4 phi values
+            const phi_v: Vec4 = .{ c.phi[base], c.phi[base + 1], c.phi[base + 2], c.phi[base + 3] };
 
-            const _8phi2 = 8.0 * sq(phi_k);
-            const _2phi = 2.0 * phi_k;
+            // Evaluate polynomials  (Horner form via vector ops)
+            const b_x0_v: Vec4 = @splat(b_x0);
+            const b_x1_v: Vec4 = @splat(b_x1);
+            const b_x2_v: Vec4 = @splat(b_x2);
+            const a_x0_v: Vec4 = @splat(a_x0);
+            const a_x1_v: Vec4 = @splat(a_x1);
+            const a_x2_v: Vec4 = @splat(a_x2);
+            const b_poly_v: Vec4 = b_x0_v + phi_v * (b_x1_v + phi_v * b_x2_v);
+            const a_poly_v: Vec4 = a_x0_v + phi_v * (a_x1_v + phi_v * a_x2_v);
 
-            const bm = 20.0 / std.math.ln10 / b_poly;
-            const am = -20.0 / std.math.ln10 / a_poly;
+            // Update prediction
+            const ratio_v: Vec4 = b_poly_v / a_poly_v;
+            const pred_in: Vec4 = .{ pred[base], pred[base + 1], pred[base + 2], pred[base + 3] };
+            const pred_v: Vec4 = pred_in * ratio_v;
+            pred[base] = pred_v[0];
+            pred[base + 1] = pred_v[1];
+            pred[base + 2] = pred_v[2];
+            pred[base + 3] = pred_v[3];
 
-            const dy_db0 = bm * (ba - _2phi * (s.b1 + 4.0 * s.b2) + _8phi2 * s.b2);
-            const dy_db1 = bm * (ba - _2phi * (s.b0 + s.b2));
-            const dy_db2 = bm * (ba - _2phi * (4.0 * s.b0 + s.b1) + _8phi2 * s.b0);
+            // Gradient computation (scalar — complex chain rule per-element)
+            var j: usize = 0;
+            while (j < 4) : (j += 1) {
+                const k_ = base + j;
+                const phi_k = c.phi[k_];
+                const b_poly = b_poly_v[j];
+                const a_poly = a_poly_v[j];
+                const inv_b_poly = 1.0 / b_poly;
+                const inv_a_poly = 1.0 / a_poly;
 
-            const dy_da0 = am * (aa - _2phi * (s.a1 + 4.0 * s.a2) + _8phi2 * s.a2);
-            const dy_da1 = am * (aa - _2phi * (s.a0 + s.a2));
-            const dy_da2 = am * (aa - _2phi * (4.0 * s.a0 + s.a1) + _8phi2 * s.a0);
+                const bm = bm_c * inv_b_poly;
+                const am = am_c * inv_a_poly;
 
-            const dy_dA =
-                dy_db0 * s.db0_dA +
-                dy_db1 * s.db1_dA +
-                dy_db2 * s.db2_dA +
-                dy_da0 * s.da0_dA +
-                dy_da1 * s.da1_dA +
-                dy_da2 * s.da2_dA;
-            const dy_dalpha =
-                dy_db0 * s.db0_dalpha +
-                dy_db2 * s.db2_dalpha +
-                dy_da0 * s.da0_dalpha +
-                dy_da2 * s.da2_dalpha;
-            const dy_dcos =
-                dy_db0 * s.db0_dcos +
-                dy_db1 * s.db1_dcos +
-                dy_db2 * s.db2_dcos +
-                dy_da0 * s.da0_dcos +
-                dy_da1 * s.da1_dcos +
-                dy_da2 * s.da2_dcos;
+                const _8phi2 = 8.0 * phi_k * phi_k;
+                const _2phi = 2.0 * phi_k;
 
-            dy_dw0[n_][k_] = dy_dalpha * dalpha_dw0 + dy_dcos * dcos_dw0;
-            dy_dgain[n_][k_] = dy_dA * dA_dgain;
-            dy_dbw[n_][k_] = dy_dalpha * dalpha_dbw;
+                const dy_db0 = bm * (ba - _2phi * b1_4b2 + _8phi2 * s.b2);
+                const dy_db1 = bm * (ba - _2phi * b0_b2);
+                const dy_db2 = bm * (ba - _2phi * _4b0_b1 + _8phi2 * s.b0);
+
+                const dy_da0 = am * (aa - _2phi * a1_4a2 + _8phi2 * s.a2);
+                const dy_da1 = am * (aa - _2phi * a0_a2);
+                const dy_da2 = am * (aa - _2phi * _4a0_a1 + _8phi2 * s.a0);
+
+                const dy_dA =
+                    dy_db0 * s.db0_dA +
+                    dy_db1 * s.db1_dA +
+                    dy_db2 * s.db2_dA +
+                    dy_da0 * s.da0_dA +
+                    dy_da1 * s.da1_dA +
+                    dy_da2 * s.da2_dA;
+                const dy_dalpha =
+                    dy_db0 * s.db0_dalpha +
+                    dy_db2 * s.db2_dalpha +
+                    dy_da0 * s.da0_dalpha +
+                    dy_da2 * s.da2_dalpha;
+                const dy_dcos =
+                    dy_db0 * s.db0_dcos +
+                    dy_db1 * s.db1_dcos +
+                    dy_db2 * s.db2_dcos +
+                    dy_da0 * s.da0_dcos +
+                    dy_da1 * s.da1_dcos +
+                    dy_da2 * s.da2_dcos;
+
+                dy_dw0[n_][k_] = dy_dalpha * dalpha_dw0 + dy_dcos * dcos_dw0;
+                dy_dgain[n_][k_] = dy_dA * dA_dgain;
+                dy_dbw[n_][k_] = dy_dalpha * dalpha_dbw;
+            }
         }
     }
 
@@ -178,30 +224,53 @@ fn grad(c: *const Consts, x: *Wrt, g: *Wrt) f32 {
     var dL_dy: [K]f32 = undefined;
     var dL_dy_sum: f32 = 0.0;
 
-    for (0..K) |k_| {
-        const d = (10.0 / std.math.ln10) * @log(pred[k_]) - c.r[k_];
-        L += sq(d);
-        dL_dy[k_] = 2.0 * d;
-        dL_dy_sum += dL_dy[k_];
+    // Vectorised loss/dL_dy computation — 4 elements at a time.
+    const log_coeff: f32 = 10.0 / std.math.ln10;
+    const log_coeff_v: Vec4 = @splat(log_coeff);
+    const two_v: Vec4 = @splat(2.0);
+    var L_v: Vec4 = v4s;
+    var dL_dy_sum_v: Vec4 = v4s;
+    const K4 = K / 4;
+    var ki: usize = 0;
+    while (ki < K4) : (ki += 1) {
+        const base = ki * 4;
+        const pred_v: Vec4 = .{ pred[base], pred[base + 1], pred[base + 2], pred[base + 3] };
+        const r_v: Vec4 = .{ c.r[base], c.r[base + 1], c.r[base + 2], c.r[base + 3] };
+        const d_v: Vec4 = log_coeff_v * @log(pred_v) - r_v;
+        L_v += d_v * d_v;
+        const dL_v: Vec4 = two_v * d_v;
+        dL_dy[base] = dL_v[0];
+        dL_dy[base + 1] = dL_v[1];
+        dL_dy[base + 2] = dL_v[2];
+        dL_dy[base + 3] = dL_v[3];
+        dL_dy_sum_v += dL_v;
     }
+    L = @reduce(.Add, L_v) * rK;
+    dL_dy_sum = @reduce(.Add, dL_dy_sum_v);
 
-    L *= rK;
     amp_at(g, N).* = if (opt_amp) dL_dy_sum * rK else 0.0;
 
+    // Vectorised dot-product reductions — 4 elements at a time.
     for (0..N) |n_| {
-        var glf: f32 = 0.0;
-        var ggain: f32 = 0.0;
-        var gbw: f32 = 0.0;
+        var glf_v: Vec4 = v4s;
+        var ggain_v: Vec4 = v4s;
+        var gbw_v: Vec4 = v4s;
 
-        for (0..K) |k_| {
-            glf += dL_dy[k_] * dy_dw0[n_][k_];
-            ggain += dL_dy[k_] * dy_dgain[n_][k_];
-            gbw += dL_dy[k_] * dy_dbw[n_][k_];
+        var ki2: usize = 0;
+        while (ki2 < K4) : (ki2 += 1) {
+            const base = ki2 * 4;
+            const dy: Vec4 = .{ dL_dy[base], dL_dy[base + 1], dL_dy[base + 2], dL_dy[base + 3] };
+            const dw0: Vec4 = .{ dy_dw0[n_][base], dy_dw0[n_][base + 1], dy_dw0[n_][base + 2], dy_dw0[n_][base + 3] };
+            const dg: Vec4 = .{ dy_dgain[n_][base], dy_dgain[n_][base + 1], dy_dgain[n_][base + 2], dy_dgain[n_][base + 3] };
+            const db: Vec4 = .{ dy_dbw[n_][base], dy_dbw[n_][base + 1], dy_dbw[n_][base + 2], dy_dbw[n_][base + 3] };
+            glf_v += dy * dw0;
+            ggain_v += dy * dg;
+            gbw_v += dy * db;
         }
 
-        lf_at(g, N, n_).* = glf * rK * w0_v[n_];
-        gain_at(g, N, n_).* = ggain * rK;
-        bw_at(g, N, n_).* = gbw * rK;
+        lf_at(g, N, n_).* = @reduce(.Add, glf_v) * rK * w0_v[n_];
+        gain_at(g, N, n_).* = @reduce(.Add, ggain_v) * rK;
+        bw_at(g, N, n_).* = @reduce(.Add, gbw_v) * rK;
     }
 
     return L;
@@ -262,6 +331,10 @@ const AdaBelief = struct {
 
 fn info(comptime fmt: [:0]const u8, args: anytype) void {
     if (builtin.target.os.tag == .freestanding) return;
+    @call(.never_inline, info_impl, .{ fmt, args });
+}
+
+fn info_impl(comptime fmt: [:0]const u8, args: anytype) void {
     std.debug.print(fmt, args);
 }
 
