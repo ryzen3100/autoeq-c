@@ -35,15 +35,11 @@ src-zig/
   root.zig     — Preprocessing, top-level autoeq orchestration
   cli.zig      — Native CLI main (stdin/stdout)
   wasm.zig     — WebAssembly exports
-src/            — Original C source (kept for reference, not built)
 example/
   autoeq.js       — JS/TS wrapper for WASM module (raw WebAssembly API, memory management, configs, Smooth enum)
   autoeq-wasm.d.ts — Minimal TS declaration for WASM module
   test.ts         — TypeScript usage example
   test.py         — Python wrapper for native binary (subprocess + float32 stdin)
-web/
-  pre.js          — Legacy Emscripten --pre-js (no longer used)
-build             — Legacy shell script for Emscripten build (no longer used)
 build.zig         — Zig build file (native + WASM targets, test step)
 ```
 
