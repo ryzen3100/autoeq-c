@@ -79,7 +79,7 @@ Key design decisions:
 
 - **WASM build**: Zig cross-compiles to `wasm32-freestanding` natively — no Emscripten needed. The WASM module exports flat C-ABI functions.
 - **Float mode**: `@setFloatMode(.optimized)` must be set on hot-path functions (biquad, optimizer) to get performance comparable to C's `-ffast-math`.
-- **Performance**: Zig is ~4-18% slower than C (`-O3 -ffast-math`) on this workload. Native binary is ~1.1MB (includes Zig std lib) vs C's ~39KB.
+- **Performance (overview)**: Zig is ~14% slower than C (`-O3 -ffast-math`) on this workload. The gap is **entirely due to glibc's libmvec** (vectorized math). C auto-vectorizes transcendental calls (sin, cos, log, exp, sinh, asinh) into `_ZGVbN4v_*` SIMD implementations; Zig uses scalar `compiler-rt` math. `@Vector(4, f32)` helps with arithmetic (dot products, polynomial eval) but ~90% of runtime is in transcendental functions. `exe.linkSystemLibrary("m")` does NOT help — Zig's built-in math takes precedence. Possible fixes: call libmvec directly via `extern fn` + inline asm (Linux/glibc only), wait for Zig veclib support, override compiler-rt per-function, or use polynomial approximations. Native binary ~1.1MB vs C's ~39KB.
 - **JS wrapper**: Updated from Emscripten module to raw WebAssembly API (`WebAssembly.instantiateStreaming`). Same public interface preserved.
 - **Binary sizes**: Native ~1.1MB, WASM ~641KB.
 
